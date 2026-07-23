@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Complaint
+from app import regulatory
+from app.models import AuditEvent, Complaint
 
 
 def next_reference(db: Session) -> str:
@@ -37,6 +38,14 @@ def create_complaint(
         processing_state="pending",
     )
     db.add(complaint)
+    db.flush()  # assign the id so the audit event can reference it
+    add_audit(
+        db,
+        complaint.id,
+        actor="System",
+        action="Complaint received",
+        detail=f"Logged via {channel} channel",
+    )
     db.commit()
     db.refresh(complaint)
     return complaint
@@ -66,8 +75,60 @@ def existing_for_duplicate_check(db: Session, exclude_id: int) -> list[dict]:
     ]
 
 
-def update_status(db: Session, complaint: Complaint, status: str) -> Complaint:
+def add_audit(
+    db: Session,
+    complaint_id: int,
+    actor: str,
+    action: str,
+    detail: str | None = None,
+) -> AuditEvent:
+    """Record one entry in a complaint's audit trail. Caller owns the commit."""
+    event = AuditEvent(complaint_id=complaint_id, actor=actor, action=action, detail=detail)
+    db.add(event)
+    return event
+
+
+def update_status(db: Session, complaint: Complaint, status: str, actor: str = "QA Reviewer") -> Complaint:
+    previous = complaint.status
     complaint.status = status
+    add_audit(
+        db,
+        complaint.id,
+        actor=actor,
+        action="Status changed",
+        detail=f"{previous} -> {status}",
+    )
+    db.commit()
+    db.refresh(complaint)
+    return complaint
+
+
+def override_risk(
+    db: Session,
+    complaint: Complaint,
+    new_risk: str,
+    reason: str,
+    actor: str = "QA Reviewer",
+) -> Complaint:
+    """Let a human QA reviewer overrule the AI risk level, with a recorded reason.
+
+    In a regulated process the AI only advises; the human owns the decision. We
+    keep the AI's original call on ai_risk_level and recompute the investigation
+    deadline from the new level so the SLA stays consistent.
+    """
+    previous = complaint.risk_level
+    complaint.risk_level = new_risk
+    complaint.risk_overridden = True
+    complaint.investigation_due_at = regulatory.investigation_due_date(
+        new_risk, complaint.created_at
+    )
+    add_audit(
+        db,
+        complaint.id,
+        actor=actor,
+        action="Risk level overridden",
+        detail=f"{previous} -> {new_risk}. Reason: {reason}",
+    )
     db.commit()
     db.refresh(complaint)
     return complaint
@@ -80,6 +141,7 @@ def dashboard_stats(db: Session) -> dict:
             stmt = stmt.where(condition)
         return db.scalar(stmt) or 0
 
+    now = datetime.now(timezone.utc)
     return {
         "total": count_where(),
         "open": count_where(Complaint.status == "open"),
@@ -88,4 +150,10 @@ def dashboard_stats(db: Session) -> dict:
         "critical": count_where(Complaint.risk_level == "Critical"),
         "major": count_where(Complaint.risk_level == "Major"),
         "minor": count_where(Complaint.risk_level == "Minor"),
+        "reportable": count_where(Complaint.reportable.is_(True)),
+        "overdue": count_where(
+            Complaint.status != "closed",
+            Complaint.investigation_due_at.isnot(None),
+            Complaint.investigation_due_at < now,
+        ),
     }

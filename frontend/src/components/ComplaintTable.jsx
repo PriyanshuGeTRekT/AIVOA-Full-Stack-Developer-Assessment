@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 
 import { formatDate } from "../utils/format";
-import { RiskBadge, StatusBadge } from "./Badges";
+import { ReportableBadge, RiskBadge, SlaBadge, StatusBadge } from "./Badges";
 
 // The main worklist. Clicking a row opens the detail view.
 export default function ComplaintTable({ items, loading }) {
@@ -33,6 +33,8 @@ export default function ComplaintTable({ items, loading }) {
           <th>Batch</th>
           <th>Type</th>
           <th>Risk</th>
+          <th>Flags</th>
+          <th>SLA</th>
           <th>Status</th>
           <th>Received</th>
         </tr>
@@ -46,6 +48,13 @@ export default function ComplaintTable({ items, loading }) {
             <td>{c.complaint_type || <span className="muted">-</span>}</td>
             <td>
               <RiskBadge level={c.risk_level} />
+            </td>
+            <td>
+              <ReportableBadge reportable={c.reportable} />
+              {!c.reportable && <span className="muted">-</span>}
+            </td>
+            <td>
+              <SlaBadge daysLeft={c.investigation_days_left} isOverdue={c.is_overdue} />
             </td>
             <td>
               <StatusBadge status={c.status} />

@@ -2,7 +2,8 @@
 
 The graph is a linear pipeline. Each step enriches the shared state:
 
-    extract -> completeness -> risk -> duplicate -> root_cause -> capa -> summary
+    extract -> completeness -> risk -> reportability -> duplicate
+            -> root_cause -> capa -> summary
 
 A linear graph is the honest choice here: the steps genuinely depend on the
 extraction that comes first, and keeping it readable matters more than shaving
@@ -28,6 +29,7 @@ def build_graph():
     workflow.add_node("extract", nodes.extract_fields)
     workflow.add_node("check_completeness", nodes.check_completeness)
     workflow.add_node("classify_risk", nodes.classify_risk)
+    workflow.add_node("assess_reportability", nodes.assess_reportability)
     workflow.add_node("detect_duplicate", nodes.detect_duplicate)
     workflow.add_node("recommend_root_cause", nodes.recommend_root_cause)
     workflow.add_node("recommend_capa", nodes.recommend_capa)
@@ -36,7 +38,9 @@ def build_graph():
     workflow.add_edge(START, "extract")
     workflow.add_edge("extract", "check_completeness")
     workflow.add_edge("check_completeness", "classify_risk")
-    workflow.add_edge("classify_risk", "detect_duplicate")
+    # Reportability reads the assessed risk, so it runs right after triage.
+    workflow.add_edge("classify_risk", "assess_reportability")
+    workflow.add_edge("assess_reportability", "detect_duplicate")
     workflow.add_edge("detect_duplicate", "recommend_root_cause")
     workflow.add_edge("recommend_root_cause", "recommend_capa")
     workflow.add_edge("recommend_capa", "summarise")

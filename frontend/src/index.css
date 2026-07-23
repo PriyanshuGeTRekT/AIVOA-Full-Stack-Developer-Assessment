@@ -187,9 +187,15 @@ a {
 /* ---------- Stat cards ---------- */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
+}
+
+.stat-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
 }
 
 .stat-card {
@@ -586,4 +592,226 @@ input:focus {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
+}
+
+/* ---------- Quality signals panel ---------- */
+.signals-panel {
+  background: linear-gradient(135deg, #fff5f5, #fff);
+  border: 1px solid #f6d5d5;
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 24px;
+}
+
+.signals-panel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signals-panel .sub {
+  color: var(--text-muted);
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+
+.signal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.signal-row:last-child {
+  margin-bottom: 0;
+}
+
+.signal-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.signal-title {
+  font-weight: 600;
+}
+
+.signal-rec {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 640px;
+}
+
+.signal-count {
+  background: var(--critical-soft);
+  color: var(--critical);
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+/* ---------- Regulatory / SLA card ---------- */
+.reg-card {
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+}
+
+.reg-card.reportable {
+  background: var(--critical-soft);
+  border-color: #f3c9c9;
+}
+
+.reg-card.clear {
+  background: var(--minor-soft);
+  border-color: #cfe9dc;
+}
+
+.reg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.reg-detail {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #3a4356;
+}
+
+.due-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin-top: 8px;
+}
+
+.due-pill.ok {
+  background: var(--minor-soft);
+  color: var(--minor);
+}
+.due-pill.warn {
+  background: var(--major-soft);
+  color: var(--major);
+}
+.due-pill.danger {
+  background: var(--critical-soft);
+  color: var(--critical);
+}
+
+/* ---------- Override control ---------- */
+.override-box {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-top: 12px;
+}
+
+.override-box label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.override-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.override-row select {
+  flex: 0 0 130px;
+}
+
+.override-row input {
+  flex: 1;
+}
+
+.overridden-note {
+  font-size: 12px;
+  color: var(--major);
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+/* ---------- Audit timeline ---------- */
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.timeline li {
+  position: relative;
+  padding: 0 0 16px 20px;
+  border-left: 2px solid var(--border);
+}
+
+.timeline li:last-child {
+  padding-bottom: 0;
+}
+
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.timeline .t-action {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.timeline .t-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.timeline .t-detail {
+  font-size: 12px;
+  color: #3a4356;
+  margin-top: 2px;
+}
+
+.related-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.related-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.related-item .ref {
+  cursor: pointer;
 }

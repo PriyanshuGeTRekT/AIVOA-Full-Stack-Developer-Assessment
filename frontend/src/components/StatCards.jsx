@@ -8,7 +8,8 @@ export default function StatCards() {
     { label: "Total complaints", value: stats.total, tone: "" },
     { label: "Open", value: stats.open, tone: "" },
     { label: "Critical risk", value: stats.critical, tone: "critical" },
-    { label: "Under review", value: stats.under_review, tone: "major" },
+    { label: "Reportable", value: stats.reportable, tone: "major", hint: "Regulatory report due" },
+    { label: "Overdue", value: stats.overdue, tone: stats.overdue ? "critical" : "", hint: "Past investigation SLA" },
   ];
 
   return (
@@ -17,6 +18,7 @@ export default function StatCards() {
         <div className="stat-card" key={card.label}>
           <div className="stat-label">{card.label}</div>
           <div className={`stat-value ${card.tone}`}>{card.value}</div>
+          {card.hint && <div className="stat-hint">{card.hint}</div>}
         </div>
       ))}
     </div>

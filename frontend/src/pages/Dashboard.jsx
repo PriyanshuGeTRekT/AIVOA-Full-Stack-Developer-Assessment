@@ -3,8 +3,9 @@ import { useDispatch, useSelector } from "react-redux";
 
 import ComplaintTable from "../components/ComplaintTable";
 import NewComplaintModal from "../components/NewComplaintModal";
+import SignalsPanel from "../components/SignalsPanel";
 import StatCards from "../components/StatCards";
-import { fetchComplaints, fetchStats } from "../store/complaintsSlice";
+import { fetchComplaints, fetchSignals, fetchStats } from "../store/complaintsSlice";
 
 export default function Dashboard() {
   const dispatch = useDispatch();
@@ -14,6 +15,7 @@ export default function Dashboard() {
   useEffect(() => {
     dispatch(fetchComplaints());
     dispatch(fetchStats());
+    dispatch(fetchSignals());
   }, [dispatch]);
 
   return (
@@ -31,6 +33,8 @@ export default function Dashboard() {
       </div>
 
       <StatCards />
+
+      <SignalsPanel />
 
       <div className="card">
         <div className="card-head">Complaint worklist</div>

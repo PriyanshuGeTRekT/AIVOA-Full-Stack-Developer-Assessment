@@ -221,6 +221,61 @@ def _risk_heuristic(extracted: dict, raw: str) -> tuple[str, str]:
 
 
 # --------------------------------------------------------------------------- #
+# Node: regulatory reportability assessment                                   #
+# --------------------------------------------------------------------------- #
+ADVERSE_HINTS = [
+    "adverse", "reaction", "hospital", "death", "injury", "injur", "harm",
+    "allergic", "rash", "unconscious", "anaphyla",
+]
+FIELD_ALERT_HINTS = [
+    "contaminat", "mix up", "mix-up", "wrong product", "microb", "sterile",
+    "foreign", "particle", "impur", "discolor", "discolour", "mould", "mold",
+]
+
+
+def assess_reportability(state: ComplaintState) -> dict:
+    extracted = state["extracted"]
+    risk = state.get("risk_level", "")
+    try:
+        result = complete_json(
+            prompts.REPORTABILITY_SYSTEM,
+            prompts.reportability_user(extracted, risk, state["raw_text"]),
+        )
+        report_type = str(result.get("report_type", "")).strip()
+        valid = {
+            "FDA Field Alert Report",
+            "Pharmacovigilance / Adverse Event",
+            "None",
+        }
+        if report_type not in valid:
+            raise LLMUnavailable("unexpected report type")
+        reportable = bool(result.get("reportable")) and report_type != "None"
+        reason = result.get("reason") or ""
+    except LLMUnavailable:
+        reportable, report_type, reason = _reportability_heuristic(extracted, state["raw_text"])
+    return {"reportable": reportable, "report_type": report_type, "report_reason": reason}
+
+
+def _reportability_heuristic(extracted: dict, raw: str) -> tuple[bool, str, str]:
+    text = f"{raw} {extracted.get('description') or ''}".lower()
+    complaint_type = extracted.get("complaint_type")
+
+    if complaint_type == "Adverse Event" or _matches_any(text, ADVERSE_HINTS):
+        return (
+            True,
+            "Pharmacovigilance / Adverse Event",
+            "Suspected adverse drug reaction; route to pharmacovigilance for expedited reporting.",
+        )
+    if _matches_any(text, FIELD_ALERT_HINTS):
+        return (
+            True,
+            "FDA Field Alert Report",
+            "Possible contamination, mix up or significant defect on a distributed product.",
+        )
+    return (False, "None", "No regulatory reporting trigger identified in the complaint.")
+
+
+# --------------------------------------------------------------------------- #
 # Node: duplicate detection (no LLM, pure comparison)                         #
 # --------------------------------------------------------------------------- #
 def detect_duplicate(state: ComplaintState) -> dict:
@@ -228,15 +283,16 @@ def detect_duplicate(state: ComplaintState) -> dict:
     best_id = None
     best_score = 0.0
 
+    # Weights sum to 1.0 so the score reads as a 0 to 1 similarity. A shared
+    # batch number for the same product is the strongest single signal.
     for other in state.get("existing", []):
         score = 0.0
-        # A shared batch number for the same product is the strongest signal.
         if extracted.get("batch_number") and other.get("batch_number"):
             if extracted["batch_number"].lower() == other["batch_number"].lower():
-                score += 0.6
+                score += 0.5
         if extracted.get("product_name") and other.get("product_name"):
             score += 0.2 * _similar(extracted["product_name"], other["product_name"])
-        score += 0.4 * _similar(extracted.get("description") or "", other.get("description") or "")
+        score += 0.3 * _similar(extracted.get("description") or "", other.get("description") or "")
 
         if score > best_score:
             best_score = score

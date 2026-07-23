@@ -42,6 +42,26 @@ Return ONLY JSON:
  "missing_fields": ["field names that are absent or unusable"],
  "notes": "one short sentence of guidance for the QA reviewer"}."""
 
+REPORTABILITY_SYSTEM = """You are a pharmaceutical regulatory affairs assistant.
+Decide whether a customer complaint is likely to trigger a mandatory report to
+a health authority. Use this guidance:
+
+- "FDA Field Alert Report": a distributed product shows a quality defect that
+  could affect safety or identity, such as microbial contamination, a product
+  or label mix up, a wrong product, or a significant chemical or physical
+  deterioration.
+- "Pharmacovigilance / Adverse Event": the complaint describes a suspected
+  adverse drug reaction, harm, hospitalisation or death associated with the
+  product. Treat this as reportable even if the quality defect is unclear.
+- "None": cosmetic or minor issues with no safety, identity or adverse event
+  concern.
+
+Be careful with negation: "no adverse effect was reported" is NOT an adverse
+event. Return ONLY JSON:
+{"reportable": true/false,
+ "report_type": "FDA Field Alert Report" | "Pharmacovigilance / Adverse Event" | "None",
+ "reason": "one sentence justification"}."""
+
 ROOT_CAUSE_SYSTEM = """You are a pharmaceutical investigator. Given a complaint,
 suggest the most plausible potential root cause to guide the investigation.
 Be specific to manufacturing, packaging, storage or distribution causes where
@@ -68,6 +88,15 @@ def risk_user(extracted: dict, raw_text: str) -> str:
         f"Product: {extracted.get('product_name')}\n"
         f"Type: {extracted.get('complaint_type')}\n"
         f"Description: {extracted.get('description')}\n\n"
+        f"Original text:\n{raw_text.strip()}"
+    )
+
+
+def reportability_user(extracted: dict, risk_level: str, raw_text: str) -> str:
+    return (
+        f"Assessed risk: {risk_level}\n"
+        f"Type: {extracted.get('complaint_type')}\n"
+        f"Problem: {extracted.get('description')}\n\n"
         f"Original text:\n{raw_text.strip()}"
     )
 

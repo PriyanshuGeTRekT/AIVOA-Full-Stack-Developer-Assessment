@@ -4,8 +4,23 @@ An AI assisted Customer Complaint module for a pharmaceutical Quality Management
 System (QMS). It takes a raw complaint (pasted text, an email, or an uploaded
 PDF) about an API or finished dosage form (FDF) product and runs it through a
 LangGraph agent that extracts the key fields, checks completeness, classifies
-risk, flags likely duplicates, and drafts a root cause and CAPA for the QA
-reviewer.
+risk, decides whether it is a reportable regulatory event, flags likely
+duplicates, and drafts a root cause and CAPA for the QA reviewer.
+
+It goes beyond "read the complaint and fill a form". It targets the four things
+that actually hurt a pharma quality team:
+
+1. **Missed reporting deadlines.** The agent flags when a complaint likely
+   triggers a mandatory report (FDA Field Alert Report, or Pharmacovigilance for
+   an adverse event) and computes the deadline, counting working days.
+2. **Systemic batch problems seen too late.** A trend detector watches across
+   complaints and raises a quality signal when several point at the same batch
+   or the same product defect, which is what GMP complaint trending is for.
+3. **Investigations aging past their SLA.** Each complaint gets an investigation
+   due date from its risk level, and overdue records are surfaced.
+4. **Unreviewable AI decisions.** A QA reviewer can override the AI risk level
+   with a recorded reason, and every meaningful change is written to an audit
+   trail. The AI advises; the human decides.
 
 The whole thing runs end to end out of the box. If you set a Groq API key it
 uses the `gemma2-9b-it` model for the reasoning steps; if you do not, it falls
@@ -45,17 +60,12 @@ control of the decision.
 ## The AI workflow (LangGraph)
 
 The agent lives in `backend/app/agent`. It is a single compiled graph that runs
-the complaint through seven nodes in sequence. Each node reads the shared state
+the complaint through eight nodes in sequence. Each node reads the shared state
 and writes back the piece it produced.
 
 ```
-        ┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌─────────────────┐
-START ─▶│ extract │─▶ │ completeness │─▶ │ classify_risk │─▶ │ detect_duplicate │─┐
-        └─────────┘   └──────────────┘   └──────────────┘   └─────────────────┘ │
-                                                                                 ▼
-                    ┌────────────┐   ┌───────────────┐   ┌──────────────────────┐
-             END ◀──│  summarise │◀─ │ recommend_capa│◀─ │ recommend_root_cause │
-                    └────────────┘   └───────────────┘   └──────────────────────┘
+  extract -> check_completeness -> classify_risk -> assess_reportability
+          -> detect_duplicate -> recommend_root_cause -> recommend_capa -> summarise
 ```
 
 | Node                   | What it does                                          | AI feature                     |
@@ -63,10 +73,25 @@ START ─▶│ extract │─▶ │ completeness │─▶ │ classify_risk �
 | `extract`              | Parses raw text into structured fields                | Field extraction               |
 | `check_completeness`   | Flags missing fields needed to investigate            | Complaint Completeness Checker |
 | `classify_risk`        | Critical / Major / Minor with a rationale             | AI Risk Classification         |
+| `assess_reportability` | Decides FDA Field Alert / Pharmacovigilance / None    | Regulatory reportability       |
 | `detect_duplicate`     | Compares against existing complaints (no LLM)         | Duplicate Complaint Detection  |
 | `recommend_root_cause` | Suggests a probable root cause                        | Root Cause Recommendation      |
 | `recommend_capa`       | Drafts corrective and preventive actions              | CAPA Recommendation            |
 | `summarise`            | One line summary for the dashboard                    | Complaint Summary              |
+
+Two more AI features live outside the per-complaint graph because they only make
+sense across the whole dataset or need a human in the loop:
+
+- **Trend / signal detection** (`services/signals.py`) runs across all
+  complaints and raises a quality signal when a batch or a product/defect pair
+  crosses a threshold. Duplicate detection asks "same complaint twice?"; this
+  asks "same underlying problem across many complaints?".
+- **Human override with audit trail** lets QA overrule the AI risk level with a
+  reason. The original AI call is preserved and the change is logged.
+
+The regulatory *deadlines* themselves are computed by pure, testable functions
+in `app/regulatory.py` (for example, a Field Alert Report is due 3 working days
+from receipt). The AI decides the category; deterministic code decides the date.
 
 Design notes:
 
@@ -98,16 +123,18 @@ backend/
     crud.py            Database access helpers
     routers/
       complaints.py    All /api routes
+    regulatory.py      Pure deadline math (Field Alert, PV, investigation SLA)
     agent/
       graph.py         Builds and compiles the LangGraph
       state.py         Shared graph state (TypedDict)
-      nodes.py         The seven node functions + heuristics
+      nodes.py         The eight node functions + heuristics
       llm.py           Groq wrapper with graceful fallback
       prompts.py       Prompt templates per node
     services/
       documents.py     Text extraction from PDF / email / txt
       processing.py    Runs the graph and persists the result
-      seed.py          Sample complaints on first run
+      signals.py       Cross complaint trend / signal detection
+      seed.py          Sample complaints on first run (incl. a batch cluster)
   sample_data/         Demo complaint files (eml, txt, pdf)
   requirements.txt
   .env.example
@@ -193,11 +220,14 @@ docker compose up -d
 | ------ | --------------------------------- | -------------------------------- |
 | GET    | `/api/health`                     | Status and current LLM mode      |
 | GET    | `/api/stats`                      | Dashboard counters               |
+| GET    | `/api/signals`                    | Detected cross complaint trends  |
 | GET    | `/api/complaints`                 | List (worklist rows)             |
 | GET    | `/api/complaints/{id}`            | Full complaint record            |
+| GET    | `/api/complaints/{id}/related`    | Other complaints on same batch   |
 | POST   | `/api/complaints`                 | Create from pasted text          |
 | POST   | `/api/complaints/upload`          | Create from an uploaded file     |
 | PATCH  | `/api/complaints/{id}/status`     | Move through the workflow        |
+| PATCH  | `/api/complaints/{id}/risk`       | Human override of AI risk level  |
 | POST   | `/api/complaints/{id}/reprocess`  | Re-run the agent                 |
 
 ---
@@ -216,6 +246,25 @@ docker compose up -d
   to a background worker for higher volumes.
 - **Agent output stored on the complaint row.** One read gives the UI the whole
   picture, which keeps the frontend simple.
+- **AI decides categories, deterministic code decides deadlines.** Reportability
+  type comes from the agent; the actual due dates come from `regulatory.py`. You
+  never want a language model doing date arithmetic on a legal deadline.
+- **Trend detection is not an LLM call, and neither is duplicate detection.**
+  Both are cheap, deterministic and explainable. In a regulated setting, "why
+  did it flag this" needs a clear answer, and a similarity score gives one.
+- **Human in the loop is a first class feature, not an afterthought.** GMP does
+  not allow an algorithm to be the final decision maker on a quality event, so
+  override plus audit trail is built in rather than bolted on.
+
+## Domain modelling choices (and their caveats)
+
+The regulatory windows in `regulatory.py` (Field Alert 3 working days,
+expedited PV 15 calendar days, investigation SLAs by risk) are realistic
+defaults, not legal advice. They are named constants in one file precisely
+because a real site would set them from its own SOPs. The reportability and
+risk logic are decision support: they are tuned to be sensitive (better to flag
+one report too many than miss one), and the human override exists for the cases
+where the AI is wrong.
 
 ## Note on the code
 

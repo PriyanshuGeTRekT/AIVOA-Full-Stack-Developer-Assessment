@@ -25,7 +25,13 @@ export const complaintsApi = {
   },
   updateStatus: (id, status) =>
     client.patch(`/api/complaints/${id}/status`, { status }).then((r) => r.data),
+  overrideRisk: (id, risk_level, reason, actor) =>
+    client
+      .patch(`/api/complaints/${id}/risk`, { risk_level, reason, actor })
+      .then((r) => r.data),
   reprocess: (id) => client.post(`/api/complaints/${id}/reprocess`).then((r) => r.data),
+  signals: () => client.get("/api/signals").then((r) => r.data),
+  related: (id) => client.get(`/api/complaints/${id}/related`).then((r) => r.data),
 };
 
 export default client;

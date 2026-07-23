@@ -16,3 +16,6 @@ pdfplumber==0.11.4
 
 # Postgres driver (used when DATABASE_URL points at Postgres).
 psycopg2-binary==2.9.10
+
+# Testing.
+pytest==8.3.4

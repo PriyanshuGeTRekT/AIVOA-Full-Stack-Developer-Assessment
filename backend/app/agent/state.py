@@ -21,6 +21,9 @@ class ComplaintState(TypedDict, total=False):
     completeness: dict
     risk_level: str
     risk_rationale: str
+    reportable: bool
+    report_type: str
+    report_reason: str
     root_cause: str
     capa: str
     summary: str

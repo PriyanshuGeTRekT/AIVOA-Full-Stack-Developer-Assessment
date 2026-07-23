@@ -28,6 +28,27 @@ SAMPLE_COMPLAINTS = [
             "Regards, Sunrise Pharmacy, contact: pharmacist@sunrisepharma.com"
         ),
     },
+    # The next two share batch AMX-2405-118. Individually they look like ordinary
+    # complaints; together with the one above they cross the trend threshold and
+    # raise a batch level quality signal. This is the pattern the signal detector
+    # exists to surface.
+    {
+        "channel": "web_form",
+        "text": (
+            "Amoxicillin 500mg capsules from batch AMX-2405-118 had dark specks "
+            "inside two of the capsules. Reported by Green Cross Pharmacy, "
+            "contact: qa@greencrossrx.com"
+        ),
+    },
+    {
+        "channel": "email",
+        "text": (
+            "Subject: Black particles again in Amoxicillin\n\n"
+            "A customer returned Amoxicillin 500mg capsules, lot AMX-2405-118, "
+            "reporting tiny black particles in the powder inside the capsule shell. "
+            "No illness reported. Reported by Northside Chemists."
+        ),
+    },
     {
         "channel": "web_form",
         "text": (

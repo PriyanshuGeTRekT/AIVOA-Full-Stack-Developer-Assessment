@@ -20,3 +20,22 @@ export function StatusBadge({ status }) {
     </span>
   );
 }
+
+// Shows how the investigation SLA is tracking. Negative days_left means overdue.
+export function SlaBadge({ daysLeft, isOverdue }) {
+  if (daysLeft === null || daysLeft === undefined) {
+    return <span className="muted">-</span>;
+  }
+  if (isOverdue) {
+    return <span className="badge critical">Overdue {Math.abs(daysLeft)}d</span>;
+  }
+  if (daysLeft <= 3) {
+    return <span className="badge major">Due in {daysLeft}d</span>;
+  }
+  return <span className="badge minor">{daysLeft}d left</span>;
+}
+
+export function ReportableBadge({ reportable }) {
+  if (!reportable) return null;
+  return <span className="badge critical">Reportable</span>;
+}

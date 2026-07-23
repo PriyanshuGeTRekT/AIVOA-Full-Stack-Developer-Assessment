@@ -16,9 +16,12 @@ from app.schemas import (
     ComplaintRead,
     ComplaintSummaryRow,
     DashboardStats,
+    QualitySignal,
+    RelatedComplaints,
+    RiskOverride,
     StatusUpdate,
 )
-from app.services import documents
+from app.services import documents, signals
 from app.services.processing import process_complaint
 
 router = APIRouter(prefix="/api", tags=["complaints"])
@@ -70,6 +73,23 @@ def update_status(complaint_id: int, payload: StatusUpdate, db: Session = Depend
     return crud.update_status(db, complaint, payload.status)
 
 
+@router.patch("/complaints/{complaint_id}/risk", response_model=ComplaintRead)
+def override_risk(complaint_id: int, payload: RiskOverride, db: Session = Depends(get_db)):
+    """QA reviewer overrides the AI risk level. The AI call is kept for audit."""
+    complaint = crud.get_complaint(db, complaint_id)
+    if complaint is None:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    return crud.override_risk(db, complaint, payload.risk_level, payload.reason, payload.actor)
+
+
+@router.get("/complaints/{complaint_id}/related", response_model=RelatedComplaints)
+def related(complaint_id: int, db: Session = Depends(get_db)):
+    complaint = crud.get_complaint(db, complaint_id)
+    if complaint is None:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    return signals.related_complaints(db, complaint)
+
+
 @router.post("/complaints/{complaint_id}/reprocess", response_model=ComplaintRead)
 def reprocess(complaint_id: int, db: Session = Depends(get_db)):
     """Re-run the agent, handy after configuring a Groq key."""
@@ -82,3 +102,9 @@ def reprocess(complaint_id: int, db: Session = Depends(get_db)):
 @router.get("/stats", response_model=DashboardStats)
 def stats(db: Session = Depends(get_db)):
     return crud.dashboard_stats(db)
+
+
+@router.get("/signals", response_model=list[QualitySignal])
+def quality_signals(db: Session = Depends(get_db)):
+    """Detected trends across complaints (batch clusters, recurring defects)."""
+    return signals.detect_signals(db)

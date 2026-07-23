@@ -14,6 +14,10 @@ export const fetchStats = createAsyncThunk("complaints/fetchStats", () =>
   complaintsApi.stats()
 );
 
+export const fetchSignals = createAsyncThunk("complaints/fetchSignals", () =>
+  complaintsApi.signals()
+);
+
 export const fetchComplaint = createAsyncThunk("complaints/fetchOne", (id) =>
   complaintsApi.get(id)
 );
@@ -38,9 +42,19 @@ export const reprocessComplaint = createAsyncThunk(
   (id) => complaintsApi.reprocess(id)
 );
 
+export const overrideRisk = createAsyncThunk(
+  "complaints/overrideRisk",
+  ({ id, risk_level, reason, actor }) =>
+    complaintsApi.overrideRisk(id, risk_level, reason, actor)
+);
+
 const initialState = {
   items: [],
-  stats: { total: 0, open: 0, under_review: 0, closed: 0, critical: 0, major: 0, minor: 0 },
+  stats: {
+    total: 0, open: 0, under_review: 0, closed: 0,
+    critical: 0, major: 0, minor: 0, reportable: 0, overdue: 0,
+  },
+  signals: [],
   selected: null,
   listStatus: "idle",
   submitStatus: "idle",
@@ -74,6 +88,9 @@ const complaintsSlice = createSlice({
       })
       .addCase(fetchStats.fulfilled, (state, action) => {
         state.stats = action.payload;
+      })
+      .addCase(fetchSignals.fulfilled, (state, action) => {
+        state.signals = action.payload;
       })
       .addCase(fetchComplaint.fulfilled, (state, action) => {
         state.selected = action.payload;
@@ -110,6 +127,9 @@ const complaintsSlice = createSlice({
       })
       .addCase(reprocessComplaint.fulfilled, (state, action) => {
         applyUpdate(state, action.payload);
+      })
+      .addCase(overrideRisk.fulfilled, (state, action) => {
+        applyUpdate(state, action.payload);
       });
   },
 });
@@ -123,8 +143,11 @@ function toRow(c) {
     batch_number: c.batch_number,
     complaint_type: c.complaint_type,
     risk_level: c.risk_level,
+    reportable: c.reportable,
     status: c.status,
     processing_state: c.processing_state,
+    investigation_days_left: c.investigation_days_left,
+    is_overdue: c.is_overdue,
     created_at: c.created_at,
   };
 }

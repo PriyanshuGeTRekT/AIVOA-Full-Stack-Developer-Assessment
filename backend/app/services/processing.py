@@ -9,7 +9,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app import crud
+from app import crud, regulatory
 from app.agent.graph import run_pipeline
 from app.models import Complaint
 
@@ -43,6 +43,9 @@ def process_complaint(db: Session, complaint: Complaint) -> Complaint:
     complaint.description = extracted.get("description")
 
     complaint.risk_level = result.get("risk_level")
+    # Only overwrite the AI baseline if a human has not taken control of it.
+    if not complaint.risk_overridden:
+        complaint.ai_risk_level = result.get("risk_level")
     complaint.risk_rationale = result.get("risk_rationale")
     complaint.summary = result.get("summary")
     complaint.root_cause = result.get("root_cause")
@@ -51,7 +54,27 @@ def process_complaint(db: Session, complaint: Complaint) -> Complaint:
     complaint.duplicate_of = result.get("duplicate_of")
     complaint.duplicate_score = result.get("duplicate_score")
 
+    # Regulatory reportability and its deadline.
+    complaint.reportable = result.get("reportable")
+    complaint.report_type = result.get("report_type")
+    complaint.report_reason = result.get("report_reason")
+    complaint.report_due_at = regulatory.report_due_date(
+        complaint.report_type, complaint.created_at
+    )
+
+    # Investigation SLA follows the assessed risk level.
+    complaint.investigation_due_at = regulatory.investigation_due_date(
+        complaint.risk_level, complaint.created_at
+    )
+
     complaint.processing_state = "done"
+
+    detail = (
+        f"Risk: {complaint.risk_level}; "
+        f"Reportable: {complaint.report_type if complaint.reportable else 'No'}"
+    )
+    crud.add_audit(db, complaint.id, actor="AI Agent", action="AI analysis completed", detail=detail)
+
     db.commit()
     db.refresh(complaint)
     return complaint
