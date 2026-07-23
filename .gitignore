@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Environment and secrets
+.env
+backend/.env
+
+# Local database and logs
+*.db
+*.sqlite3
+*.log
+
+# Node / frontend
+node_modules/
+dist/
+frontend/npm-install.log
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

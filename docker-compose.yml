@@ -1,0 +1,28 @@
+# Spins up Postgres for the production style setup. The backend reads
+# DATABASE_URL from its environment, so pointing it at this database is all it
+# takes to switch off the local SQLite default.
+#
+#   docker compose up -d
+#   # then in backend/.env:
+#   DATABASE_URL=postgresql+psycopg2://qms:qms@localhost:5432/complaints
+
+services:
+  db:
+    image: postgres:16
+    container_name: pharmaqms-db
+    environment:
+      POSTGRES_USER: qms
+      POSTGRES_PASSWORD: qms
+      POSTGRES_DB: complaints
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qms -d complaints"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
