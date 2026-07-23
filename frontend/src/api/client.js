@@ -1,15 +1,14 @@
 import axios from "axios";
 
-// One axios instance for the whole app. The base URL is empty because the Vite
-// dev server proxies /api straight to FastAPI (see vite.config.js). In a real
-// deployment you would point this at the API host via an env variable.
+// Empty base URL in dev (Vite proxies /api). Set VITE_API_BASE_URL for static deploys.
 const client = axios.create({
-  baseURL: "",
+  baseURL: import.meta.env.VITE_API_BASE_URL || "",
   headers: { "Content-Type": "application/json" },
 });
 
 export const complaintsApi = {
-  list: () => client.get("/api/complaints").then((r) => r.data),
+  list: (params = {}) =>
+    client.get("/api/complaints", { params }).then((r) => r.data),
   get: (id) => client.get(`/api/complaints/${id}`).then((r) => r.data),
   stats: () => client.get("/api/stats").then((r) => r.data),
   createFromText: (source_text) =>
@@ -32,6 +31,22 @@ export const complaintsApi = {
   reprocess: (id) => client.post(`/api/complaints/${id}/reprocess`).then((r) => r.data),
   signals: () => client.get("/api/signals").then((r) => r.data),
   related: (id) => client.get(`/api/complaints/${id}/related`).then((r) => r.data),
+  health: () => client.get("/api/health").then((r) => r.data),
 };
+
+// Poll until processing_state is done/failed or we time out.
+export async function waitForProcessing(id, { intervalMs = 800, timeoutMs = 120000 } = {}) {
+  const started = Date.now();
+  while (true) {
+    const complaint = await complaintsApi.get(id);
+    if (complaint.processing_state === "done" || complaint.processing_state === "failed") {
+      return complaint;
+    }
+    if (Date.now() - started > timeoutMs) {
+      throw new Error("Timed out waiting for AI analysis");
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
 
 export default client;

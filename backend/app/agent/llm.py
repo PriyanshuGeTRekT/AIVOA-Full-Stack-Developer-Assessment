@@ -1,11 +1,4 @@
-"""Thin wrapper around the Groq chat model.
-
-The rest of the agent talks to the LLM only through these two helpers. That
-keeps the Groq specific details in one place and, importantly, gives us a
-single spot to fall back to a heuristic when no API key is configured or a
-call fails. The workflow therefore runs end to end even without Groq access,
-which makes local demos and CI painless.
-"""
+"""Groq chat wrapper. Nodes call this; on failure they fall back to heuristics."""
 
 import json
 import logging
@@ -17,59 +10,73 @@ settings = get_settings()
 
 
 class LLMUnavailable(Exception):
-    """Raised when we cannot get a usable answer from the model.
-
-    Nodes catch this and switch to their deterministic fallback so a missing
-    key or a transient Groq error never breaks the pipeline.
-    """
+    """No usable model response (missing key, network error, bad JSON, etc.)."""
 
 
-# The ChatGroq client is created lazily and reused. We keep it module level so
-# we do not pay the construction cost on every node call.
-_client = None
+_primary_client = None
+_fallback_client = None
 
 
-def _get_client():
-    global _client
-    if _client is not None:
-        return _client
-    if not settings.has_groq:
-        raise LLMUnavailable("GROQ_API_KEY is not set")
-
-    # Imported lazily so the package installs and imports even if the optional
-    # LLM dependencies are missing in a minimal environment.
+def _build_client(model: str):
     from langchain_groq import ChatGroq
 
-    _client = ChatGroq(
+    return ChatGroq(
         api_key=settings.groq_api_key,
-        model=settings.groq_model,
+        model=model,
         temperature=settings.llm_temperature,
-        # We have our own heuristic fallback, so there is no point in the client
-        # retrying a bad key many times. Fail fast and let the node degrade.
         max_retries=1,
         timeout=30,
     )
-    return _client
+
+
+def _get_primary():
+    global _primary_client
+    if _primary_client is not None:
+        return _primary_client
+    if not settings.has_groq:
+        raise LLMUnavailable("GROQ_API_KEY is not set")
+    _primary_client = _build_client(settings.groq_model)
+    return _primary_client
+
+
+def _get_fallback():
+    global _fallback_client
+    if _fallback_client is not None:
+        return _fallback_client
+    if not settings.has_groq:
+        raise LLMUnavailable("GROQ_API_KEY is not set")
+    fallback = (settings.groq_fallback_model or "").strip()
+    if not fallback or fallback == settings.groq_model:
+        return None
+    _fallback_client = _build_client(fallback)
+    return _fallback_client
 
 
 def complete_text(system: str, user: str) -> str:
-    """Return the model's plain text answer for a system/user prompt pair."""
-    client = _get_client()
+    """Call primary model, then fallback model, else raise LLMUnavailable."""
+    messages = [("system", system), ("human", user)]
+    primary = _get_primary()
     try:
-        response = client.invoke([("system", system), ("human", user)])
-    except Exception as exc:  # noqa: BLE001 - we deliberately treat any failure the same
-        logger.warning("Groq call failed, falling back to heuristic: %s", exc)
-        raise LLMUnavailable(str(exc)) from exc
-    return (response.content or "").strip()
+        response = primary.invoke(messages)
+        return (response.content or "").strip()
+    except Exception as primary_exc:  # noqa: BLE001
+        logger.warning("Primary Groq model failed (%s): %s", settings.groq_model, primary_exc)
+        fallback = _get_fallback()
+        if fallback is None:
+            raise LLMUnavailable(str(primary_exc)) from primary_exc
+        try:
+            logger.info("Retrying with fallback model %s", settings.groq_fallback_model)
+            response = fallback.invoke(messages)
+            return (response.content or "").strip()
+        except Exception as fallback_exc:  # noqa: BLE001
+            logger.warning(
+                "Fallback Groq model failed (%s): %s", settings.groq_fallback_model, fallback_exc
+            )
+            raise LLMUnavailable(str(fallback_exc)) from fallback_exc
 
 
 def complete_json(system: str, user: str) -> dict:
-    """Ask the model for JSON and parse it defensively.
-
-    Small instruction tuned models occasionally wrap JSON in prose or code
-    fences, so we extract the outermost object rather than trusting the reply
-    to be clean.
-    """
+    """Ask for JSON and parse defensively (strips fences / surrounding prose)."""
     raw = complete_text(system, user)
     parsed = _extract_json(raw)
     if parsed is None:
@@ -80,7 +87,6 @@ def complete_json(system: str, user: str) -> dict:
 def _extract_json(text: str) -> dict | None:
     text = text.strip()
     if text.startswith("```"):
-        # Strip a leading ```json / ``` fence and the trailing fence.
         text = text.split("```", 2)[1] if text.count("```") >= 2 else text
         if text.lower().startswith("json"):
             text = text[4:]

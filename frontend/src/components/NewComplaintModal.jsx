@@ -1,21 +1,20 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 
 import {
   clearSubmitStatus,
+  fetchSignals,
   fetchStats,
   submitFileComplaint,
   submitTextComplaint,
 } from "../store/complaintsSlice";
 
-// Intake dialog. It offers the two ways a complaint arrives in this demo:
-// pasting the text of an email/form, or uploading a source document. Either
-// way the backend runs the same agent, so the two tabs converge on one flow.
 export default function NewComplaintModal({ onClose }) {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const dialogRef = useRef(null);
 
   const [tab, setTab] = useState("text");
   const [text, setText] = useState("");
@@ -25,6 +24,19 @@ export default function NewComplaintModal({ onClose }) {
   const error = useSelector((s) => s.complaints.error);
   const submitting = submitStatus === "loading";
 
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape" && !submitting) onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    dialogRef.current?.querySelector("textarea, button")?.focus?.();
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, submitting]);
+
+  useEffect(() => {
+    dispatch(clearSubmitStatus());
+  }, [dispatch]);
+
   async function handleSubmit() {
     const action =
       tab === "text"
@@ -33,8 +45,8 @@ export default function NewComplaintModal({ onClose }) {
 
     const result = await dispatch(action);
     if (result.meta.requestStatus === "fulfilled") {
-      // Refresh the dashboard counters, then jump to the freshly analysed record.
       dispatch(fetchStats());
+      dispatch(fetchSignals());
       dispatch(clearSubmitStatus());
       onClose();
       navigate(`/complaints/${result.payload.id}`);
@@ -45,22 +57,39 @@ export default function NewComplaintModal({ onClose }) {
     !submitting && (tab === "text" ? text.trim().length >= 5 : Boolean(file));
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Log a customer complaint</h2>
+    <div
+      className="modal-backdrop"
+      onClick={() => !submitting && onClose()}
+      role="presentation"
+    >
+      <div
+        className="modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-complaint-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="new-complaint-title">Log a customer complaint</h2>
         <p className="hint">
           Paste the complaint text or upload the source document. The AI agent
           will extract the details, assess risk and suggest next steps.
         </p>
 
-        <div className="tabs">
+        <div className="tabs" role="tablist">
           <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "text"}
             className={`tab ${tab === "text" ? "active" : ""}`}
             onClick={() => setTab("text")}
           >
             Paste text
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "upload"}
             className={`tab ${tab === "upload" ? "active" : ""}`}
             onClick={() => setTab("upload")}
           >
@@ -79,6 +108,9 @@ export default function NewComplaintModal({ onClose }) {
           <div
             className="dropzone"
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
+            role="button"
+            tabIndex={0}
           >
             <input
               ref={fileInputRef}
@@ -95,7 +127,7 @@ export default function NewComplaintModal({ onClose }) {
             ) : (
               <div>
                 <strong>Click to choose a file</strong>
-                <div className="muted">PDF, EML or TXT complaint document</div>
+                <div className="muted">PDF, EML or TXT complaint document (max 5 MB)</div>
               </div>
             )}
           </div>
@@ -104,10 +136,20 @@ export default function NewComplaintModal({ onClose }) {
         {error && <div className="error-text">Something went wrong: {error}</div>}
 
         <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose} disabled={submitting}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onClose}
+            disabled={submitting}
+          >
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={!canSubmit}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+          >
             {submitting ? (
               <>
                 <span className="spinner" /> Analysing...

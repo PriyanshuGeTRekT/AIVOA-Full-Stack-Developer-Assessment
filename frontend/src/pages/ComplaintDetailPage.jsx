@@ -38,8 +38,14 @@ export default function ComplaintDetailPage() {
   }
 
   async function onStatusChange(e) {
-    await dispatch(changeStatus({ id: complaint.id, status: e.target.value }));
-    dispatch(fetchStats());
+    const next = e.target.value;
+    const result = await dispatch(changeStatus({ id: complaint.id, status: next }));
+    if (result.meta.requestStatus === "fulfilled") {
+      dispatch(fetchStats());
+    } else {
+      e.target.value = complaint.status;
+      window.alert(result.payload || "That status change is not allowed.");
+    }
   }
 
   async function onReprocess() {
@@ -93,11 +99,23 @@ export default function ComplaintDetailPage() {
         <div className="alert warn">
           <span>⚠️</span>
           <div>
-            This looks like a possible duplicate of complaint #{complaint.duplicate_of}
+            This looks like a possible duplicate of{" "}
+            <Link to={`/complaints/${complaint.duplicate_of}`} className="ref">
+              {complaint.duplicate_reference || `complaint #${complaint.duplicate_of}`}
+            </Link>
             {complaint.duplicate_score
               ? ` (similarity ${Math.round(complaint.duplicate_score * 100)}%)`
               : ""}
             . Review before opening a new investigation.
+          </div>
+        </div>
+      )}
+      {complaint.processing_state === "failed" && (
+        <div className="alert danger">
+          <span>!</span>
+          <div>
+            AI analysis failed{complaint.processing_error ? `: ${complaint.processing_error}` : "."}
+            {" "}Use Re-run AI to try again.
           </div>
         </div>
       )}
@@ -189,8 +207,6 @@ export default function ComplaintDetailPage() {
   );
 }
 
-// The regulatory reportability banner. This is the highest stakes output in the
-// whole app, so it sits at the top and shows the deadline front and centre.
 function ReportabilityCard({ complaint }) {
   if (complaint.reportable === null || complaint.reportable === undefined) return null;
 
@@ -225,7 +241,6 @@ function ReportabilityCard({ complaint }) {
   );
 }
 
-// Risk block with the human-in-the-loop override. The AI advises; QA decides.
 function RiskBlock({ complaint }) {
   const dispatch = useDispatch();
   const [level, setLevel] = useState(complaint.risk_level || "Major");

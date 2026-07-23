@@ -1,9 +1,4 @@
-"""Pydantic schemas used at the API boundary.
-
-These are intentionally separate from the ORM models. The API contract should
-be free to differ from the storage layout, and it keeps request validation and
-response shaping in one obvious place.
-"""
+"""Request/response schemas (API layer, separate from ORM)."""
 
 from datetime import datetime
 
@@ -11,8 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ComplaintCreate(BaseModel):
-    """Payload for creating a complaint from pasted text."""
-
     source_text: str = Field(min_length=5, description="Raw complaint body")
     channel: str = Field(default="manual")
 
@@ -33,8 +26,6 @@ class AuditEventRead(BaseModel):
 
 
 class ComplaintRead(BaseModel):
-    """Full complaint as returned to the frontend."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -71,6 +62,7 @@ class ComplaintRead(BaseModel):
     completeness: CompletenessResult | None = None
     duplicate_of: int | None = None
     duplicate_score: float | None = None
+    duplicate_reference: str | None = None
 
     status: str
     processing_state: str
@@ -83,8 +75,6 @@ class ComplaintRead(BaseModel):
 
 
 class ComplaintSummaryRow(BaseModel):
-    """Lightweight row for the dashboard list view."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -99,6 +89,14 @@ class ComplaintSummaryRow(BaseModel):
     investigation_days_left: int | None = None
     is_overdue: bool = False
     created_at: datetime
+
+
+class PaginatedComplaints(BaseModel):
+    items: list[ComplaintSummaryRow]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class StatusUpdate(BaseModel):
@@ -121,6 +119,7 @@ class DashboardStats(BaseModel):
     minor: int
     reportable: int
     overdue: int
+    processing: int = 0
 
 
 class QualitySignal(BaseModel):

@@ -1,13 +1,15 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 
-import { complaintsApi } from "../api/client";
+import { complaintsApi, waitForProcessing } from "../api/client";
 
-// All server interaction goes through async thunks so components stay free of
-// data fetching logic and the loading/error state lives in one predictable
-// place. This is the standard Redux Toolkit pattern.
-
-export const fetchComplaints = createAsyncThunk("complaints/fetchAll", () =>
-  complaintsApi.list()
+export const fetchComplaints = createAsyncThunk(
+  "complaints/fetchAll",
+  (params = {}, { getState }) => {
+    const filters = params && Object.keys(params).length
+      ? params
+      : getState().complaints.filters;
+    return complaintsApi.list(filters);
+  }
 );
 
 export const fetchStats = createAsyncThunk("complaints/fetchStats", () =>
@@ -22,24 +24,45 @@ export const fetchComplaint = createAsyncThunk("complaints/fetchOne", (id) =>
   complaintsApi.get(id)
 );
 
+async function createAndWait(createFn, payload) {
+  const created = await createFn(payload);
+  if (created.processing_state === "done" || created.processing_state === "failed") {
+    return created;
+  }
+  return waitForProcessing(created.id);
+}
+
 export const submitTextComplaint = createAsyncThunk(
   "complaints/submitText",
-  (text) => complaintsApi.createFromText(text)
+  (text) => createAndWait(complaintsApi.createFromText, text)
 );
 
 export const submitFileComplaint = createAsyncThunk(
   "complaints/submitFile",
-  (file) => complaintsApi.createFromFile(file)
+  (file) => createAndWait(complaintsApi.createFromFile, file)
 );
 
 export const changeStatus = createAsyncThunk(
   "complaints/changeStatus",
-  ({ id, status }) => complaintsApi.updateStatus(id, status)
+  async ({ id, status }, { rejectWithValue }) => {
+    try {
+      return await complaintsApi.updateStatus(id, status);
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err.message;
+      return rejectWithValue(detail);
+    }
+  }
 );
 
 export const reprocessComplaint = createAsyncThunk(
   "complaints/reprocess",
-  (id) => complaintsApi.reprocess(id)
+  async (id) => {
+    const started = await complaintsApi.reprocess(id);
+    if (started.processing_state === "done" || started.processing_state === "failed") {
+      return started;
+    }
+    return waitForProcessing(id);
+  }
 );
 
 export const overrideRisk = createAsyncThunk(
@@ -48,11 +71,26 @@ export const overrideRisk = createAsyncThunk(
     complaintsApi.overrideRisk(id, risk_level, reason, actor)
 );
 
+const defaultFilters = {
+  q: "",
+  status: "",
+  risk_level: "",
+  reportable: "",
+  overdue: "",
+  sort: "created_at",
+  order: "desc",
+  page: 1,
+  page_size: 50,
+};
+
 const initialState = {
   items: [],
+  total: 0,
+  pages: 1,
+  filters: { ...defaultFilters },
   stats: {
     total: 0, open: 0, under_review: 0, closed: 0,
-    critical: 0, major: 0, minor: 0, reportable: 0, overdue: 0,
+    critical: 0, major: 0, minor: 0, reportable: 0, overdue: 0, processing: 0,
   },
   signals: [],
   selected: null,
@@ -60,6 +98,15 @@ const initialState = {
   submitStatus: "idle",
   error: null,
 };
+
+function cleanParams(filters) {
+  const params = {};
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === "" || value === null || value === undefined) return;
+    params[key] = value;
+  });
+  return params;
+}
 
 const complaintsSlice = createSlice({
   name: "complaints",
@@ -72,6 +119,16 @@ const complaintsSlice = createSlice({
       state.submitStatus = "idle";
       state.error = null;
     },
+    setFilters(state, action) {
+      state.filters = {
+        ...state.filters,
+        ...action.payload,
+        page: action.payload.page ?? 1,
+      };
+    },
+    resetFilters(state) {
+      state.filters = { ...defaultFilters };
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -80,14 +137,16 @@ const complaintsSlice = createSlice({
       })
       .addCase(fetchComplaints.fulfilled, (state, action) => {
         state.listStatus = "succeeded";
-        state.items = action.payload;
+        state.items = action.payload.items || [];
+        state.total = action.payload.total ?? 0;
+        state.pages = action.payload.pages ?? 1;
       })
       .addCase(fetchComplaints.rejected, (state, action) => {
         state.listStatus = "failed";
         state.error = action.error.message;
       })
       .addCase(fetchStats.fulfilled, (state, action) => {
-        state.stats = action.payload;
+        state.stats = { ...state.stats, ...action.payload };
       })
       .addCase(fetchSignals.fulfilled, (state, action) => {
         state.signals = action.payload;
@@ -95,7 +154,6 @@ const complaintsSlice = createSlice({
       .addCase(fetchComplaint.fulfilled, (state, action) => {
         state.selected = action.payload;
       })
-      // Both intake paths behave the same way from the UI's point of view.
       .addCase(submitTextComplaint.pending, (state) => {
         state.submitStatus = "loading";
         state.error = null;
@@ -108,11 +166,13 @@ const complaintsSlice = createSlice({
         state.submitStatus = "succeeded";
         state.items.unshift(toRow(action.payload));
         state.selected = action.payload;
+        state.total += 1;
       })
       .addCase(submitFileComplaint.fulfilled, (state, action) => {
         state.submitStatus = "succeeded";
         state.items.unshift(toRow(action.payload));
         state.selected = action.payload;
+        state.total += 1;
       })
       .addCase(submitTextComplaint.rejected, (state, action) => {
         state.submitStatus = "failed";
@@ -124,6 +184,10 @@ const complaintsSlice = createSlice({
       })
       .addCase(changeStatus.fulfilled, (state, action) => {
         applyUpdate(state, action.payload);
+        state.error = null;
+      })
+      .addCase(changeStatus.rejected, (state, action) => {
+        state.error = action.payload || action.error.message;
       })
       .addCase(reprocessComplaint.fulfilled, (state, action) => {
         applyUpdate(state, action.payload);
@@ -134,7 +198,6 @@ const complaintsSlice = createSlice({
   },
 });
 
-// Map a full complaint record down to the fields the table row needs.
 function toRow(c) {
   return {
     id: c.id,
@@ -152,7 +215,6 @@ function toRow(c) {
   };
 }
 
-// Keep the list row and the selected record in sync after an update.
 function applyUpdate(state, updated) {
   state.selected = updated;
   const index = state.items.findIndex((c) => c.id === updated.id);
@@ -161,5 +223,7 @@ function applyUpdate(state, updated) {
   }
 }
 
-export const { clearSelected, clearSubmitStatus } = complaintsSlice.actions;
+export const { clearSelected, clearSubmitStatus, setFilters, resetFilters } =
+  complaintsSlice.actions;
+export { cleanParams, defaultFilters };
 export default complaintsSlice.reducer;

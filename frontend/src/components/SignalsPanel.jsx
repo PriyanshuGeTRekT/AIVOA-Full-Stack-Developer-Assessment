@@ -1,9 +1,7 @@
 import { useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 
-// Surfaces cross complaint trends. This is the panel that turns "four separate
-// tickets" into "one batch problem you should look at now", which is the whole
-// point of complaint trending in a QMS.
+// Batch / product-defect clusters from the signals API.
 export default function SignalsPanel() {
   const signals = useSelector((s) => s.complaints.signals);
   const navigate = useNavigate();

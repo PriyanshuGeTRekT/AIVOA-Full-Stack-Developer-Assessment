@@ -1,8 +1,4 @@
-"""Tests for the deadline math.
-
-These deadlines are the highest stakes logic in the app, so they are the part
-most worth pinning down with tests. Everything here is pure and deterministic.
-"""
+"""Deadline math tests (working days, SLAs, overdue)."""
 
 from datetime import datetime, timezone
 

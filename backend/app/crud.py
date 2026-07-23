@@ -1,27 +1,37 @@
-"""Database access helpers.
-
-Routers call these functions rather than touching the session directly, so the
-query logic lives in one place and stays easy to test.
-"""
+"""DB helpers used by routers (queries, creates, status/risk updates)."""
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import regulatory
 from app.models import AuditEvent, Complaint
 
+STATUS_TRANSITIONS = {
+    "open": {"under_review", "closed"},
+    "under_review": {"open", "closed"},
+    "closed": {"under_review"},
+}
+
+
+class InvalidStatusTransition(ValueError):
+    pass
+
 
 def next_reference(db: Session) -> str:
-    """Generate a human friendly reference like CMP-2026-0007.
-
-    We count existing rows for the current year and add one. This is fine for a
-    single writer demo; a production system would use a dedicated sequence.
-    """
+    """Next CMP-YYYY-NNNN for the current year (max suffix + 1)."""
     year = datetime.now(timezone.utc).year
-    count = db.scalar(select(func.count()).select_from(Complaint)) or 0
-    return f"CMP-{year}-{count + 1:04d}"
+    prefix = f"CMP-{year}-"
+    stmt = select(Complaint.reference).where(Complaint.reference.like(f"{prefix}%"))
+    max_n = 0
+    for ref in db.scalars(stmt):
+        try:
+            max_n = max(max_n, int(str(ref).rsplit("-", 1)[-1]))
+        except (TypeError, ValueError):
+            continue
+    return f"{prefix}{max_n + 1:04d}"
 
 
 def create_complaint(
@@ -29,40 +39,130 @@ def create_complaint(
     source_text: str,
     channel: str = "manual",
     original_filename: str | None = None,
+    *,
+    max_attempts: int = 5,
 ) -> Complaint:
-    complaint = Complaint(
-        reference=next_reference(db),
-        channel=channel,
-        source_text=source_text,
-        original_filename=original_filename,
-        processing_state="pending",
-    )
-    db.add(complaint)
-    db.flush()  # assign the id so the audit event can reference it
-    add_audit(
-        db,
-        complaint.id,
-        actor="System",
-        action="Complaint received",
-        detail=f"Logged via {channel} channel",
-    )
-    db.commit()
-    db.refresh(complaint)
-    return complaint
+    """Insert a complaint; retry if reference collides under concurrent writers."""
+    last_error: Exception | None = None
+    for _ in range(max_attempts):
+        complaint = Complaint(
+            reference=next_reference(db),
+            channel=channel,
+            source_text=source_text,
+            original_filename=original_filename,
+            processing_state="pending",
+        )
+        db.add(complaint)
+        try:
+            db.flush()  # assign the id so the audit event can reference it
+            add_audit(
+                db,
+                complaint.id,
+                actor="System",
+                action="Complaint received",
+                detail=f"Logged via {channel} channel",
+            )
+            db.commit()
+            db.refresh(complaint)
+            return complaint
+        except IntegrityError as exc:
+            db.rollback()
+            last_error = exc
+            continue
+    raise RuntimeError("Could not allocate a unique complaint reference") from last_error
 
 
 def get_complaint(db: Session, complaint_id: int) -> Complaint | None:
     return db.get(Complaint, complaint_id)
 
 
-def list_complaints(db: Session) -> list[Complaint]:
-    stmt = select(Complaint).order_by(Complaint.created_at.desc())
-    return list(db.scalars(stmt))
+def get_complaint_by_reference(db: Session, reference: str) -> Complaint | None:
+    return db.scalar(select(Complaint).where(Complaint.reference == reference))
+
+
+def list_complaints(
+    db: Session,
+    *,
+    status: str | None = None,
+    risk_level: str | None = None,
+    reportable: bool | None = None,
+    overdue: bool | None = None,
+    processing_state: str | None = None,
+    q: str | None = None,
+    sort: str = "created_at",
+    order: str = "desc",
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[Complaint], int]:
+    """Filtered/sorted page of complaints and total count."""
+    stmt = select(Complaint)
+    count_stmt = select(func.count()).select_from(Complaint)
+    now = datetime.now(timezone.utc)
+
+    conditions = []
+    if status:
+        conditions.append(Complaint.status == status)
+    if risk_level:
+        conditions.append(Complaint.risk_level == risk_level)
+    if reportable is not None:
+        conditions.append(Complaint.reportable.is_(reportable))
+    if processing_state:
+        conditions.append(Complaint.processing_state == processing_state)
+    if overdue is True:
+        conditions.extend(
+            [
+                Complaint.status != "closed",
+                Complaint.investigation_due_at.isnot(None),
+                Complaint.investigation_due_at < now,
+            ]
+        )
+    elif overdue is False:
+        conditions.append(
+            or_(
+                Complaint.status == "closed",
+                Complaint.investigation_due_at.is_(None),
+                Complaint.investigation_due_at >= now,
+            )
+        )
+    if q:
+        like = f"%{q.strip()}%"
+        conditions.append(
+            or_(
+                Complaint.reference.ilike(like),
+                Complaint.product_name.ilike(like),
+                Complaint.batch_number.ilike(like),
+                Complaint.complaint_type.ilike(like),
+                Complaint.description.ilike(like),
+            )
+        )
+
+    for condition in conditions:
+        stmt = stmt.where(condition)
+        count_stmt = count_stmt.where(condition)
+
+    sort_map = {
+        "created_at": Complaint.created_at,
+        "reference": Complaint.reference,
+        "risk_level": Complaint.risk_level,
+        "status": Complaint.status,
+        "product_name": Complaint.product_name,
+    }
+    sort_col = sort_map.get(sort, Complaint.created_at)
+    stmt = stmt.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    total = db.scalar(count_stmt) or 0
+    rows = list(db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)))
+    return rows, total
 
 
 def existing_for_duplicate_check(db: Session, exclude_id: int) -> list[dict]:
-    """Return lightweight records the duplicate node compares against."""
-    stmt = select(Complaint).where(Complaint.id != exclude_id)
+    """Rows used by the duplicate detector (exclude current id)."""
+    stmt = select(Complaint).where(
+        Complaint.id != exclude_id,
+        Complaint.processing_state == "done",
+    )
     return [
         {
             "id": c.id,
@@ -82,14 +182,26 @@ def add_audit(
     action: str,
     detail: str | None = None,
 ) -> AuditEvent:
-    """Record one entry in a complaint's audit trail. Caller owns the commit."""
+    """Append an audit row. Caller commits."""
     event = AuditEvent(complaint_id=complaint_id, actor=actor, action=action, detail=detail)
     db.add(event)
     return event
 
 
-def update_status(db: Session, complaint: Complaint, status: str, actor: str = "QA Reviewer") -> Complaint:
+def update_status(
+    db: Session,
+    complaint: Complaint,
+    status: str,
+    actor: str = "QA Reviewer",
+) -> Complaint:
     previous = complaint.status
+    if previous == status:
+        return complaint
+    allowed = STATUS_TRANSITIONS.get(previous, set())
+    if status not in allowed:
+        raise InvalidStatusTransition(
+            f"Cannot move from '{previous}' to '{status}'. Allowed: {sorted(allowed) or 'none'}"
+        )
     complaint.status = status
     add_audit(
         db,
@@ -110,12 +222,7 @@ def override_risk(
     reason: str,
     actor: str = "QA Reviewer",
 ) -> Complaint:
-    """Let a human QA reviewer overrule the AI risk level, with a recorded reason.
-
-    In a regulated process the AI only advises; the human owns the decision. We
-    keep the AI's original call on ai_risk_level and recompute the investigation
-    deadline from the new level so the SLA stays consistent.
-    """
+    """QA overrides risk; keep original AI level and recompute investigation SLA."""
     previous = complaint.risk_level
     complaint.risk_level = new_risk
     complaint.risk_overridden = True
@@ -155,5 +262,8 @@ def dashboard_stats(db: Session) -> dict:
             Complaint.status != "closed",
             Complaint.investigation_due_at.isnot(None),
             Complaint.investigation_due_at < now,
+        ),
+        "processing": count_where(
+            Complaint.processing_state.in_(["pending", "processing"])
         ),
     }

@@ -1,13 +1,4 @@
-"""LangGraph node implementations.
-
-Every node follows the same shape: try the LLM, and if the LLM is unavailable
-(no key or an error) fall back to a deterministic heuristic. That dual path is
-what lets the whole pipeline run without external services while still using
-Groq when it is configured.
-
-Each function takes the current ComplaintState and returns a partial state with
-just the keys it produced. LangGraph merges those partials for us.
-"""
+"""Graph nodes. Pattern: try LLM, on LLMUnavailable use a local heuristic."""
 
 import logging
 import re
@@ -23,18 +14,12 @@ EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 PHONE_RE = re.compile(r"(?:\+?\d[\d\s().-]{7,}\d)")
 BATCH_KEYWORD_RE = re.compile(r"\b(?:batch|lot|b\.?\s*no\.?)\b", re.I)
 CODE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-/]{2,}")
-# Words that sit between "batch" and the real code, which we must not mistake
-# for the code itself (for example "Batch / Lot number: AZI-2404-158").
+# Skip label words after "batch" / "lot" (e.g. "Lot number: AZI-2404-158").
 BATCH_STOPWORDS = {"number", "no", "lot", "batch"}
 
 
 def _find_batch(raw: str) -> str | None:
-    """Find a batch/lot code near a batch/lot keyword.
-
-    We look at the text right after the keyword and pick the first token that
-    actually looks like a code (contains a digit) rather than blindly grabbing
-    the next word, which is often a label like "number".
-    """
+    """Return the first batch/lot-like token after a batch/lot keyword."""
     for keyword in BATCH_KEYWORD_RE.finditer(raw):
         tail = raw[keyword.end() : keyword.end() + 50]
         for candidate in CODE_TOKEN_RE.findall(tail):
@@ -44,8 +29,7 @@ def _find_batch(raw: str) -> str | None:
                 return candidate.strip(".,;")
     return None
 
-# Keyword tables drive the heuristic fallbacks. They are deliberately simple;
-# the LLM is expected to do the nuanced work when it is available.
+# Simple keyword maps for the no-LLM path.
 TYPE_KEYWORDS = {
     "Contamination": ["contaminat", "impur", "microb", "mold", "fungus"],
     "Foreign Particle": ["particle", "foreign", "fiber", "glass", "black spot", "speck"],
@@ -70,14 +54,7 @@ NEGATIONS = ("no ", "not ", "without ", "denies ", "denied ", "n't ", "free of "
 
 
 def _matches_any(text: str, hints: list[str]) -> bool:
-    """Word boundary aware keyword match with a light negation guard.
-
-    Plain substring matching bites us on two things: "pharmacist" containing
-    "harm" (fixed by anchoring each hint to a word start), and phrases like
-    "no adverse effect was reported" that should not count as a hit. So for
-    every match we also glance at the few characters before it for a negation.
-    Stems such as "contaminat" still match "contamination".
-    """
+    """Keyword match at word start; ignore hits after light negation words."""
     for hint in hints:
         for match in re.finditer(rf"\b{re.escape(hint)}", text):
             prefix = text[max(0, match.start() - 12) : match.start()]
@@ -94,6 +71,13 @@ def _similar(a: str, b: str) -> float:
 # --------------------------------------------------------------------------- #
 # Node: extract structured fields                                             #
 # --------------------------------------------------------------------------- #
+def _mark_llm(state: ComplaintState, used: bool) -> dict:
+    # Only set True; never overwrite an earlier True with False.
+    if used:
+        return {"used_llm": True}
+    return {}
+
+
 def extract_fields(state: ComplaintState) -> dict:
     raw = state["raw_text"]
     try:
@@ -108,7 +92,7 @@ def extract_fields(state: ComplaintState) -> dict:
                 "complainant_contact", "complaint_type", "description"):
         extracted.setdefault(key, None)
 
-    return {"extracted": extracted, "used_llm": used_llm}
+    return {"extracted": extracted, **_mark_llm(state, used_llm)}
 
 
 def _extract_heuristic(raw: str) -> dict:
@@ -174,15 +158,18 @@ def check_completeness(state: ComplaintState) -> dict:
         # Guard against a model returning an odd shape.
         result.setdefault("is_complete", False)
         result.setdefault("missing_fields", [])
+        return {"completeness": result, **_mark_llm(state, True)}
     except LLMUnavailable:
         result = _completeness_heuristic(extracted)
-    return {"completeness": result}
+        return {"completeness": result}
 
 
 def _completeness_heuristic(extracted: dict) -> dict:
+    # Aligned with COMPLETENESS_SYSTEM so LLM and heuristic agree on "ready".
     required = {
         "product_name": "Product name",
         "batch_number": "Batch/lot number",
+        "complainant_name": "Complainant name",
         "complaint_type": "Complaint type",
         "description": "Problem description",
     }
@@ -206,9 +193,10 @@ def classify_risk(state: ComplaintState) -> dict:
         if level not in {"Critical", "Major", "Minor"}:
             raise LLMUnavailable("unexpected risk level")
         rationale = result.get("rationale") or ""
+        return {"risk_level": level, "risk_rationale": rationale, **_mark_llm(state, True)}
     except LLMUnavailable:
         level, rationale = _risk_heuristic(extracted, state["raw_text"])
-    return {"risk_level": level, "risk_rationale": rationale}
+        return {"risk_level": level, "risk_rationale": rationale}
 
 
 def _risk_heuristic(extracted: dict, raw: str) -> tuple[str, str]:
@@ -251,9 +239,15 @@ def assess_reportability(state: ComplaintState) -> dict:
             raise LLMUnavailable("unexpected report type")
         reportable = bool(result.get("reportable")) and report_type != "None"
         reason = result.get("reason") or ""
+        return {
+            "reportable": reportable,
+            "report_type": report_type,
+            "report_reason": reason,
+            **_mark_llm(state, True),
+        }
     except LLMUnavailable:
         reportable, report_type, reason = _reportability_heuristic(extracted, state["raw_text"])
-    return {"reportable": reportable, "report_type": report_type, "report_reason": reason}
+        return {"reportable": reportable, "report_type": report_type, "report_reason": reason}
 
 
 def _reportability_heuristic(extracted: dict, raw: str) -> tuple[bool, str, str]:
@@ -305,15 +299,31 @@ def detect_duplicate(state: ComplaintState) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Node: skip investigation when a strong duplicate was found                  #
+# --------------------------------------------------------------------------- #
+def skip_investigation_for_duplicate(state: ComplaintState) -> dict:
+    """Avoid inventing root cause / CAPA for a likely re-logged complaint."""
+    score = state.get("duplicate_score")
+    score_txt = f" (similarity {score:.0%})" if isinstance(score, (int, float)) else ""
+    note = (
+        f"Investigation suggestions skipped{score_txt}: this complaint was flagged as a "
+        f"likely duplicate of #{state.get('duplicate_of')}. Review the original record "
+        "before opening a parallel investigation."
+    )
+    return {"root_cause": note, "capa": note}
+
+
+# --------------------------------------------------------------------------- #
 # Node: root cause recommendation                                            #
 # --------------------------------------------------------------------------- #
 def recommend_root_cause(state: ComplaintState) -> dict:
     extracted = state["extracted"]
     try:
         text = complete_text(prompts.ROOT_CAUSE_SYSTEM, prompts.root_cause_user(extracted))
+        return {"root_cause": text, **_mark_llm(state, True)}
     except LLMUnavailable:
         text = _root_cause_heuristic(extracted)
-    return {"root_cause": text}
+        return {"root_cause": text}
 
 
 def _root_cause_heuristic(extracted: dict) -> str:
@@ -348,9 +358,10 @@ def recommend_capa(state: ComplaintState) -> dict:
     root_cause = state.get("root_cause", "")
     try:
         text = complete_text(prompts.CAPA_SYSTEM, prompts.capa_user(extracted, root_cause))
+        return {"capa": text, **_mark_llm(state, True)}
     except LLMUnavailable:
         text = _capa_heuristic(extracted)
-    return {"capa": text}
+        return {"capa": text}
 
 
 def _capa_heuristic(extracted: dict) -> str:
@@ -391,8 +402,9 @@ def summarise(state: ComplaintState) -> dict:
     extracted = state["extracted"]
     try:
         text = complete_text(prompts.SUMMARY_SYSTEM, prompts.summary_user(extracted))
+        return {"summary": text.strip(), **_mark_llm(state, True)}
     except LLMUnavailable:
         product = extracted.get("product_name") or "Unknown product"
         problem = extracted.get("description") or "an unspecified issue"
         text = f"{product}: {problem}"
-    return {"summary": text.strip()}
+        return {"summary": text.strip()}

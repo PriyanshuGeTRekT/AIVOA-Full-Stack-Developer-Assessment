@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { formatDate } from "../utils/format";
 import { ReportableBadge, RiskBadge, SlaBadge, StatusBadge } from "./Badges";
 
-// The main worklist. Clicking a row opens the detail view.
 export default function ComplaintTable({ items, loading }) {
   const navigate = useNavigate();
 

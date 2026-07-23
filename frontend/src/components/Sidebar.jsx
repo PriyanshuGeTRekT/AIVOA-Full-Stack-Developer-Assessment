@@ -1,39 +1,49 @@
 import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 
-import client from "../api/client";
+import { complaintsApi } from "../api/client";
 
-// The sidebar is mostly static, but it also surfaces which LLM mode the backend
-// is running in. That transparency is useful during a demo: you can see at a
-// glance whether Groq is wired up or the heuristic fallback is in play.
 export default function Sidebar() {
   const [llmMode, setLlmMode] = useState(null);
+  const [dbStatus, setDbStatus] = useState(null);
+  const location = useLocation();
+  const onComplaints = location.pathname === "/" || location.pathname.startsWith("/complaints");
 
   useEffect(() => {
-    client
-      .get("/api/health")
-      .then((r) => setLlmMode(r.data.llm_mode))
-      .catch(() => setLlmMode(null));
+    complaintsApi
+      .health()
+      .then((data) => {
+        setLlmMode(data.llm_mode);
+        setDbStatus(data.database);
+      })
+      .catch(() => {
+        setLlmMode(null);
+        setDbStatus("down");
+      });
   }, []);
 
   return (
     <aside className="sidebar">
-      <div className="brand">
+      <Link to="/" className="brand">
         <span className="brand-mark">Rx</span>
         PharmaQMS
-      </div>
+      </Link>
 
-      <nav className="nav">
-        <div className="nav-item active">
+      <nav className="nav" aria-label="Primary">
+        <Link to="/" className={`nav-item ${onComplaints ? "active" : ""}`}>
           <span>📋</span> Complaints
-        </div>
-        <div className="nav-item">
+        </Link>
+        <div className="nav-item disabled" title="Planned module">
           <span>🔬</span> Investigations
+          <span className="soon-tag">Soon</span>
         </div>
-        <div className="nav-item">
+        <div className="nav-item disabled" title="Planned module">
           <span>🛠️</span> CAPA
+          <span className="soon-tag">Soon</span>
         </div>
-        <div className="nav-item">
+        <div className="nav-item disabled" title="Planned module">
           <span>📊</span> Reports
+          <span className="soon-tag">Soon</span>
         </div>
       </nav>
 
@@ -41,7 +51,13 @@ export default function Sidebar() {
         {llmMode && (
           <div className={`llm-pill ${llmMode === "heuristic" ? "heuristic" : ""}`}>
             <span>●</span>
-            {llmMode === "groq" ? "Groq gemma2-9b-it" : "Heuristic mode"}
+            {llmMode === "groq" ? "Groq LLM" : "Heuristic mode"}
+          </div>
+        )}
+        {dbStatus === "down" && (
+          <div className="llm-pill heuristic">
+            <span>●</span>
+            Backend unreachable
           </div>
         )}
         <div>Customer Complaint Module</div>

@@ -1,9 +1,4 @@
-"""Seed the database with a few realistic complaints on first run.
-
-An empty dashboard makes for a poor first impression, so if there are no
-complaints yet we insert a small, varied set and run them through the agent.
-This also doubles as a quick smoke test of the pipeline at startup.
-"""
+"""Insert sample complaints when the DB is empty (first boot)."""
 
 import logging
 
@@ -28,10 +23,7 @@ SAMPLE_COMPLAINTS = [
             "Regards, Sunrise Pharmacy, contact: pharmacist@sunrisepharma.com"
         ),
     },
-    # The next two share batch AMX-2405-118. Individually they look like ordinary
-    # complaints; together with the one above they cross the trend threshold and
-    # raise a batch level quality signal. This is the pattern the signal detector
-    # exists to surface.
+    # Same batch as above so seed data triggers a quality signal.
     {
         "channel": "web_form",
         "text": (

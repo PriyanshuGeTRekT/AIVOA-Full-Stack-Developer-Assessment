@@ -1,10 +1,12 @@
-# Spins up Postgres for the production style setup. The backend reads
-# DATABASE_URL from its environment, so pointing it at this database is all it
-# takes to switch off the local SQLite default.
+# Full local stack: Postgres + API + (optional) frontend static build notes.
 #
-#   docker compose up -d
-#   # then in backend/.env:
-#   DATABASE_URL=postgresql+psycopg2://qms:qms@localhost:5432/complaints
+#   docker compose up -d db
+#   # or full stack once images are built:
+#   docker compose up --build
+#
+# Point backend DATABASE_URL at:
+#   postgresql+psycopg2://qms:qms@localhost:5432/complaints
+# (or @db:5432 from another compose service)
 
 services:
   db:
@@ -23,6 +25,36 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pharmaqms-api
+    environment:
+      DATABASE_URL: postgresql+psycopg2://qms:qms@db:5432/complaints
+      FRONTEND_ORIGIN: http://localhost:5173
+      SYNC_PROCESSING: "false"
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - full
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pharmaqms-web
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    profiles:
+      - full
 
 volumes:
   pgdata:

@@ -1,9 +1,4 @@
-"""Application configuration.
-
-Everything that changes between environments lives here and is read from
-environment variables (or a local .env file). Nothing else in the codebase
-should reach for os.environ directly.
-"""
+"""Settings loaded from environment / .env. Keep env access here only."""
 
 from functools import lru_cache
 
@@ -14,31 +9,42 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Core service settings.
     app_name: str = "AI Complaint Management System"
     environment: str = Field(default="development")
 
-    # Database. Defaults to a local SQLite file so the project runs with zero
-    # setup, but any SQLAlchemy URL works. For the production stack we point
-    # this at Postgres (see docker-compose.yml and the README).
+    # SQLite by default; point at Postgres for the compose setup.
     database_url: str = Field(default="sqlite:///./complaints.db")
 
-    # Groq / LLM settings. When no key is present the agent falls back to a
-    # deterministic heuristic so the workflow still runs end to end.
+    # Empty key => nodes use rule-based fallbacks instead of Groq.
     groq_api_key: str = Field(default="")
-    groq_model: str = Field(default="gemma2-9b-it")
-    groq_fallback_model: str = Field(default="llama-3.3-70b-versatile")
+    groq_model: str = Field(default="openai/gpt-oss-120b")
+    groq_fallback_model: str = Field(default="openai/gpt-oss-20b")
     llm_temperature: float = Field(default=0.2)
 
-    # CORS. The Vite dev server runs on 5173 by default.
     frontend_origin: str = Field(default="http://localhost:5173")
+
+    max_upload_bytes: int = Field(default=5 * 1024 * 1024)  # 5 MB
+    allowed_upload_extensions: str = Field(
+        default=".pdf,.txt,.eml,.md,.csv,.png,.jpg,.jpeg,.gif,.webp"
+    )
+
+    # false: return quickly and process in background (client polls).
+    # true: wait for the agent in-request (handy for tests).
+    sync_processing: bool = Field(default=False)
 
     @property
     def has_groq(self) -> bool:
         return bool(self.groq_api_key.strip())
 
+    @property
+    def allowed_extensions(self) -> set[str]:
+        return {
+            ext.strip().lower() if ext.strip().startswith(".") else f".{ext.strip().lower()}"
+            for ext in self.allowed_upload_extensions.split(",")
+            if ext.strip()
+        }
+
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached accessor so we only parse the environment once."""
     return Settings()

@@ -1,9 +1,4 @@
-"""Prompt templates for each agent node.
-
-Kept in one file so the language given to the model is easy to review and tune
-without digging through the graph logic. Each node has a focused system prompt
-and builds its user message from the current state.
-"""
+"""Prompt templates for agent nodes. Keep wording here so it is easy to tune."""
 
 EXTRACTION_SYSTEM = """You are a pharmaceutical Quality Management System assistant.
 You read raw customer complaint text (from emails, PDFs or web forms) about API

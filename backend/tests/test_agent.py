@@ -1,10 +1,4 @@
-"""Tests for the agent's heuristic path.
-
-We run these with no Groq key configured, so every node falls back to its
-deterministic heuristic. That is exactly the behaviour we want to lock down,
-because the heuristic is the safety net that keeps the workflow working when the
-LLM is unavailable.
-"""
+"""Heuristic-path agent tests (no Groq key)."""
 
 from app.agent import nodes
 from app.agent.graph import run_pipeline
@@ -79,3 +73,18 @@ def test_duplicate_score_never_exceeds_one():
     )
     assert 0.0 <= result["duplicate_score"] <= 1.0
     assert result["duplicate_of"] == 1
+    assert "duplicate" in (result.get("root_cause") or "").lower()
+
+
+def test_completeness_requires_complainant_name():
+    result = nodes._completeness_heuristic(
+        {
+            "product_name": "Amoxicillin",
+            "batch_number": "AMX-1",
+            "complaint_type": "Foreign Particle",
+            "description": "Black particles visible in capsules.",
+            "complainant_name": None,
+        }
+    )
+    assert result["is_complete"] is False
+    assert "Complainant name" in result["missing_fields"]

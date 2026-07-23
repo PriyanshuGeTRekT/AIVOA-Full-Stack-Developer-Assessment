@@ -1,5 +1,3 @@
-// Small formatting helpers shared across components.
-
 export function formatDate(iso) {
   if (!iso) return "-";
   const date = new Date(iso);

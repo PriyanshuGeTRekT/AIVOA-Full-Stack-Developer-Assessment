@@ -1,16 +1,4 @@
-"""Cross complaint trend and signal detection.
-
-Duplicate detection answers "have we seen this exact complaint before". Trending
-answers a different and arguably more important question: "are several separate
-complaints pointing at the same underlying problem". GMP requires complaints to
-be trended for exactly this reason, because a cluster of individually minor
-events on one batch can be the first sign of a systemic failure or a recall.
-
-This runs on demand over the stored complaints rather than at intake, because a
-signal only becomes visible once enough related records exist. It is deliberately
-simple and deterministic; the value is in surfacing the pattern, not in fancy
-statistics.
-"""
+"""Trend detection across complaints (batch clusters, recurring product defects)."""
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -20,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Complaint
 
-# A signal needs at least this many related complaints inside the window.
 TREND_THRESHOLD = 3
 WINDOW_DAYS = 90
 
@@ -32,15 +19,13 @@ def _window_start() -> datetime:
 
 
 def _recent_complaints(db: Session) -> list[Complaint]:
-    stmt = select(Complaint).where(Complaint.processing_state == "done")
-    return [c for c in db.scalars(stmt) if _in_window(c)]
-
-
-def _in_window(complaint: Complaint) -> bool:
-    created = complaint.created_at
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    return created >= _window_start()
+    """Done complaints created inside the trend window."""
+    start = _window_start()
+    stmt = select(Complaint).where(
+        Complaint.processing_state == "done",
+        Complaint.created_at >= start,
+    )
+    return list(db.scalars(stmt))
 
 
 def _highest_risk(complaints: list[Complaint]) -> str | None:
@@ -81,7 +66,6 @@ def _recommendation(kind: str, severity: str | None) -> str:
 
 
 def detect_signals(db: Session) -> list[dict]:
-    """Return quality signals for batches and product/defect combinations."""
     complaints = _recent_complaints(db)
 
     by_batch: dict[str, list[Complaint]] = defaultdict(list)
@@ -106,13 +90,12 @@ def detect_signals(db: Session) -> list[dict]:
             product = members[0].product_name or "Unknown product"
             signals.append(_build_signal("product_defect", f"{product} - {defect}", members))
 
-    # Most serious and largest clusters first.
     signals.sort(key=lambda s: (_RISK_ORDER.get(s["severity"], 0), s["count"]), reverse=True)
     return signals
 
 
 def related_complaints(db: Session, complaint: Complaint) -> dict:
-    """Complaints that share this one's batch, for the detail view."""
+    """Other complaints on the same batch."""
     if not complaint.batch_number:
         return {"batch_number": None, "count": 0, "references": []}
 

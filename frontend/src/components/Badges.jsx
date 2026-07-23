@@ -1,7 +1,5 @@
 import { riskClass } from "../utils/format";
 
-// Two tiny presentational badges kept together because they share the pattern.
-
 export function RiskBadge({ level }) {
   if (!level) return <span className="badge neutral">Unrated</span>;
   return <span className={`badge ${riskClass(level)}`}>{level}</span>;
@@ -21,7 +19,6 @@ export function StatusBadge({ status }) {
   );
 }
 
-// Shows how the investigation SLA is tracking. Negative days_left means overdue.
 export function SlaBadge({ daysLeft, isOverdue }) {
   if (daysLeft === null || daysLeft === undefined) {
     return <span className="muted">-</span>;

@@ -1,11 +1,4 @@
-"""SQLAlchemy ORM models.
-
-The Complaint table stores both the raw intake and everything the AI agent
-derives from it. Keeping the agent output on the same row keeps the read path
-simple: one query gives the UI the full picture of a complaint. AuditEvent adds
-the paper trail a regulated process needs: every meaningful change is recorded
-with who did it and why.
-"""
+"""ORM models: Complaint (intake + AI fields) and AuditEvent (change history)."""
 
 from datetime import datetime, timezone
 
@@ -34,17 +27,14 @@ class Complaint(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Human readable reference, for example CMP-2026-0007.
+    # e.g. CMP-2026-0007
     reference: Mapped[str] = mapped_column(String(32), unique=True, index=True)
 
-    # Raw intake. source_text is whatever we managed to read from the upload or
-    # the pasted body; channel records how it arrived.
     channel: Mapped[str] = mapped_column(String(32), default="manual")
     source_text: Mapped[str] = mapped_column(Text)
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Structured fields extracted by the agent. They start empty and are filled
-    # once the graph runs.
+    # Filled by the agent after processing.
     product_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     batch_number: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     complainant_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -52,8 +42,7 @@ class Complaint(Base):
     complaint_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # AI derived fields. ai_risk_level preserves the model's original call even
-    # after a human overrides risk_level, so the audit story stays intact.
+    # risk_level can be overridden by QA; ai_risk_level keeps the model call.
     risk_level: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     ai_risk_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
     risk_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -63,27 +52,27 @@ class Complaint(Base):
     root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
     capa: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Regulatory reportability. The agent decides the category and reason; the
-    # deadline is computed deterministically from the received date.
+    # Category/reason from agent; due date from regulatory.py.
     reportable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     report_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     report_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     report_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Internal investigation SLA driven by the risk level.
     investigation_due_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
-    # Completeness and duplicate detection results.
     completeness: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    duplicate_of: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # SET NULL if the original row is deleted later.
+    duplicate_of: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("complaints.id", ondelete="SET NULL"), nullable=True
+    )
     duplicate_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # Workflow status: open -> under_review -> closed.
+    # open -> under_review -> closed
     status: Mapped[str] = mapped_column(String(32), default="open", index=True)
 
-    # Processing lifecycle so the UI can show a spinner while the agent runs.
+    # pending | processing | done | failed
     processing_state: Mapped[str] = mapped_column(String(32), default="pending")
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -98,10 +87,8 @@ class Complaint(Base):
         order_by="AuditEvent.created_at",
     )
 
-    # --- Derived, read only helpers exposed to the API via from_attributes. ---
     @property
     def investigation_days_left(self) -> int | None:
-        # Once closed the clock is not relevant, so we hide the countdown.
         if self.status == "closed":
             return None
         return days_until(self.investigation_due_at)
@@ -117,7 +104,7 @@ class Complaint(Base):
 
 
 class AuditEvent(Base):
-    """A single entry in a complaint's history (GMP style audit trail)."""
+    """One change history row for a complaint."""
 
     __tablename__ = "audit_events"
 
